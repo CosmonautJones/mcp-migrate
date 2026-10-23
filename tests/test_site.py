@@ -32,16 +32,16 @@ from mcp_migrate.rules import all_rules  # noqa: E402
 @pytest.fixture(scope="module")
 def page() -> str:
     assert OUT.exists(), "docs/index.html is missing; run scripts/render_site.py"
-    return OUT.read_text()
+    return OUT.read_text(encoding="utf-8")
 
 
 def test_committed_page_is_what_the_generator_produces(page):
     """The whole point: no hand-edits, no drift."""
     before = page
     main()
-    after = OUT.read_text()
+    after = OUT.read_text(encoding="utf-8")
     if before != after:
-        OUT.write_text(before)  # leave the tree as we found it on failure
+        OUT.write_text(before, encoding="utf-8")  # leave the tree as we found it on failure
         pytest.fail(
             "docs/index.html is stale. Run `python scripts/render_site.py` and commit."
         )
@@ -56,6 +56,23 @@ def test_pages_is_served_from_this_file():
     """
     assert OUT.name == "index.html"
     assert OUT.parent.name == "docs"
+
+
+def test_generator_writes_utf8_with_a_legacy_default_encoding(tmp_path, monkeypatch):
+    """The HTML declares UTF-8 even when the host defaults to cp1252."""
+    write_text = Path.write_text
+
+    def legacy_write_text(path, data, encoding=None, **kwargs):
+        return write_text(path, data, encoding=encoding or "cp1252", **kwargs)
+
+    output = tmp_path / "index.html"
+    monkeypatch.setattr("render_site.ROOT", tmp_path)
+    monkeypatch.setattr("render_site.OUT", output)
+    monkeypatch.setattr(Path, "write_text", legacy_write_text)
+
+    assert main() == 0
+    rendered = output.read_bytes().decode("utf-8")
+    assert "\u00d7" in rendered
 
 
 def test_every_rule_appears_with_its_id_and_title(page):

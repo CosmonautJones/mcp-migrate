@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Generate the UTF-8 landing page independently of the host's default encoding,
+  and escape the absolute baseline path in its TOML test fixture on Windows.
+
 ## [0.21.0] - 2026-10-21
 
 ### Fixed

@@ -346,7 +346,7 @@ Context Protocol project. Generated from the registry and the rule set at v{__ve
 """
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(doc)
+    OUT.write_text(doc, encoding="utf-8")
     print(f"rendered {OUT.relative_to(ROOT)}: {len(entries)} servers, {len(rules)} rules, v{__version__}")
     return 0
 

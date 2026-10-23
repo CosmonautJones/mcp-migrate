@@ -336,7 +336,9 @@ def test_config_baseline_key_is_used_when_no_flag_given(tmp_path):
     result = run_check_detailed(root)
     write(baseline_path, result.findings, version="0", spec="2026-07-28")
 
-    (root / ".mcp-migrate.toml").write_text(f'baseline = "{baseline_path}"\n', encoding="utf-8")
+    (root / ".mcp-migrate.toml").write_text(
+        f"baseline = {json.dumps(str(baseline_path), ensure_ascii=False)}\n", encoding="utf-8",
+    )
 
     assert main(["check", str(root)]) == 0, (
         "a flag beats config, but config should turn baselining on project-wide "
