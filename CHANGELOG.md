@@ -6,6 +6,11 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **R001 keeps TypeScript CORS exposure lists silent regardless of order**
+  ([#352](https://github.com/dheerajjha/mcp-migrate/issues/352)). The subscript
+  alternative now requires a receiver before the opening bracket, while actual
+  header reads and writes still fire.
+
 - Generate the UTF-8 landing page independently of the host's default encoding,
   and escape the absolute baseline path in its TOML test fixture on Windows.
 
