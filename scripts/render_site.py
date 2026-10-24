@@ -78,7 +78,7 @@ def split_ref(ref: str) -> tuple[str, str]:
 def load_entries() -> list[dict]:
     entries = []
     for path in sorted(SERVERS.glob("*.yaml")):
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             entries.append(data)
     entries.sort(
@@ -137,7 +137,7 @@ def main() -> int:
     # renders from. Hard-coding it here would be two pages claiming
     # different numbers about the same scan, which is the failure this
     # project keeps having to fix.
-    scan = json.loads(SCAN.read_text()) if SCAN.exists() else None
+    scan = json.loads(SCAN.read_text(encoding="utf-8")) if SCAN.exists() else None
     if scan:
         r001 = scan["rule_prevalence"].get("R001", {"pct": 0.0})["pct"]
         findings_line = (
