@@ -1,11 +1,17 @@
 import ast
+import re
+from bisect import bisect_right
 
-from .base import Finding, Fires, Project, Rule, Silent, wire_method
+from .base import Finding, Fires, Project, Rule, Silent, _in_content_span, wire_method
 
 # Start a quoted-key match in code before its opening quote, so search_code
 # can reject quoted field names embedded in prose strings. Matching quote
 # delimiters keep longer keys such as "elicitationId's" outside the boundary.
-TS_ELICITATION_ID_RX = r"""\belicitationId\b|[\[({,:=]\s*(["'`])elicitationId\1"""
+TS_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*(?:\n|$))*"
+TS_ELICITATION_ID_RX = (
+    rf"(?P<concat>\+{TS_GAP}(?:\({TS_GAP})*)?[\[({{,:=]{TS_GAP}"
+    rf"""(?P<quote>["'`])elicitationId(?P=quote)(?!{TS_GAP}(?:\){TS_GAP})*\+)"""
+)
 
 # Code-shaped identifiers -- SDK model/class names or plain Python names,
 # matched with search_code so a docstring/comment mention doesn't count.
@@ -61,7 +67,7 @@ TS_FEATURES_CODE = {
     r"\bListRootsRequestSchema\b": "Server-initiated roots/list",
     r"\bCreateMessageRequestSchema\b": "Server-initiated sampling/createMessage",
     r"\bElicitRequestSchema\b": "Server-initiated elicitation/create",
-    TS_ELICITATION_ID_RX: "elicitationId",
+    r"\belicitationId\b": "elicitationId",
 }
 
 
@@ -222,7 +228,7 @@ class MultiRoundTripReplacesServerInitiated(Rule):
                         text,
                         feature=name,
                     ))
-            return self._with_multiline_keys(project, out)
+            return self._with_typescript_keys(project, out)
 
         out: list[Finding] = []
         for pattern, name in FEATURES_CODE.items():
@@ -261,6 +267,9 @@ class MultiRoundTripReplacesServerInitiated(Rule):
                     continue  # Without syntax, a quoted mention could be prose.
             prose_nodes = set()
             for owner in ast.walk(tree):
+                if isinstance(owner, ast.BinOp):
+                    # A fragment of a computed string is not the complete key.
+                    prose_nodes.update(id(value) for value in (owner.left, owner.right))
                 if isinstance(owner, ast.JoinedStr):
                     # F-string text fragments are not complete wire literals.
                     # Keep nested expressions available for real payload keys.
@@ -293,24 +302,28 @@ class MultiRoundTripReplacesServerInitiated(Rule):
                 ))
         return out
 
-    def _with_multiline_keys(self, project: Project, out: list[Finding]) -> list[Finding]:
-        # A line-start literal alone could be a one-line Python docstring.
-        # Require an opening lookup/container or argument separator in code
-        # on the preceding line before accepting a standalone quoted key.
-        after_open = {
-            (f.path, line + 1)
-            for f, line, _ in project.search_code(r"[\[({,]\s*$")
-        }
+    def _with_typescript_keys(self, project: Project, out: list[Finding]) -> list[Finding]:
+        # Inspect the whole source so a concatenation on the following line
+        # cannot turn a string fragment into an exact wire literal.
         seen = {(f.path, f.line) for f in out if f.feature == "elicitationId"}
-        for f, line, text in project.search_wire(r"""^\s*(["'`])elicitationId\1"""):
-            key = (f.path, line)
-            if key not in after_open or key in seen:
-                continue
-            seen.add(key)
-            out.append(self.finding(
-                "elicitationId was replaced by Multi Round-Trip Requests (InputRequiredResult "
-                "+ inputResponses).",
-                f, line, text,
-                feature="elicitationId",
-            ))
+        for f in project.files:
+            offsets = [0] + [m.end() for m in re.finditer("\n", f.text)]
+            spans = project._spans_for(f) or []
+            for match in re.finditer(TS_ELICITATION_ID_RX, f.text):
+                if match.group("concat"):
+                    continue
+                row = bisect_right(offsets, match.start()) - 1
+                if _in_content_span(row + 1, match.start() - offsets[row], spans):
+                    continue
+                row = bisect_right(offsets, match.start("quote")) - 1
+                key = (f.path, row + 1)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(self.finding(
+                    "elicitationId was replaced by Multi Round-Trip Requests (InputRequiredResult "
+                    "+ inputResponses).",
+                    f, row + 1, f.lines[row].strip(),
+                    feature="elicitationId",
+                ))
         return out

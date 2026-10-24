@@ -10,6 +10,40 @@ from mcp_migrate.rules.r018_multi_round_trip_replaces_server_initiated import (
 from mcp_migrate.scan import load_project
 
 
+@pytest.mark.parametrize("language,source", [
+    ("python", 'HELP = "elicitationId" + " is a removed correlation field."\n'),
+    ("python", 'value = payload["elicitationId" + "Suffix"]\n'),
+    ("python", 'value = payload["prefix" + "elicitationId"]\n'),
+    ("python", 'value = payload["elicitationId" * 2]\n'),
+    ("typescript", 'const help = "elicitationId" + " is a removed correlation field.";\n'),
+    ("typescript", 'const value = params["elicitationId" + "Suffix"];\n'),
+    ("typescript", 'const value = params["prefix" + "elicitationId"];\n'),
+    ("typescript", 'const value = params[\n  "elicitationId"\n  + "Suffix"\n];\n'),
+    ("typescript", 'const value = params["elicitationId" /* longer key */ + "Suffix"];\n'),
+    ("typescript", 'const help = ("elicitationId") + " is old";\n'),
+    ("typescript", 'const value = params["prefix" + ("elicitationId")];\n'),
+    ("typescript", 'const value = params["prefix" + ((("elicitationId")))];\n'),
+    ("typescript", 'const help = (("elicitationId")) /* fragment */ + " is old";\n'),
+])
+def test_concatenated_fragments_are_not_exact_wire_literals(tmp_path, language, source):
+    suffix = ".py" if language == "python" else ".ts"
+    (tmp_path / f"server{suffix}").write_text(source, encoding="utf-8")
+    assert MultiRoundTripReplacesServerInitiated().check(
+        load_project(tmp_path).for_language(language)
+    ) == []
+
+
+def test_concatenation_does_not_hide_a_separate_exact_key(tmp_path):
+    (tmp_path / "server.ts").write_text(
+        'const help = "elicitationId" + " is old"; params["elicitationId"];\n',
+        encoding="utf-8",
+    )
+    findings = MultiRoundTripReplacesServerInitiated().check(
+        load_project(tmp_path).for_language("typescript")
+    )
+    assert [(f.line, f.feature) for f in findings] == [(1, "elicitationId")]
+
+
 @pytest.mark.parametrize("language,quote", [
     ("python", '"'),
     ("python", "'"),
