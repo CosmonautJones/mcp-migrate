@@ -58,6 +58,43 @@ def test_typescript_real_key_read_is_not_hidden_by_result_concatenation(tmp_path
     assert [(f.line, f.feature) for f in findings] == [(1, "elicitationId")]
 
 
+@pytest.mark.parametrize("language,source", [
+    ("python", 'HELP = "elicitationId".join(["Use ", " for correlation."])\n'),
+    ("python", 'value = payload["elicitationId".upper()]\n'),
+    ("python", 'value = payload["elicitationId"[1:]]\n'),
+    ("typescript", 'function help() { return ("elicitationId") + " is old"; }\n'),
+    ("typescript", 'function help() { throw ("elicitationId") + " is old"; }\n'),
+    ("typescript", 'function* help() { yield ("elicitationId") + " is old"; }\n'),
+])
+def test_transformed_literals_and_keyword_groups_are_not_wire_keys(tmp_path, language, source):
+    suffix = ".py" if language == "python" else ".ts"
+    (tmp_path / f"server{suffix}").write_text(source, encoding="utf-8")
+    assert MultiRoundTripReplacesServerInitiated().check(
+        load_project(tmp_path).for_language(language)
+    ) == []
+
+
+def test_python_real_key_transform_is_still_a_read(tmp_path):
+    (tmp_path / "server.py").write_text(
+        'value = payload["elicitationId"].upper()\n', encoding="utf-8",
+    )
+    findings = MultiRoundTripReplacesServerInitiated().check(
+        load_project(tmp_path).for_language("python")
+    )
+    assert [(f.line, f.feature) for f in findings] == [(1, "elicitationId")]
+
+
+@pytest.mark.parametrize("method", ["set", "has", "delete"])
+def test_typescript_key_methods_still_fire(tmp_path, method):
+    (tmp_path / "server.ts").write_text(
+        f'params.{method}("elicitationId", value);\n', encoding="utf-8",
+    )
+    findings = MultiRoundTripReplacesServerInitiated().check(
+        load_project(tmp_path).for_language("typescript")
+    )
+    assert [(f.line, f.feature) for f in findings] == [(1, "elicitationId")]
+
+
 @pytest.mark.parametrize("language,quote", [
     ("python", '"'),
     ("python", "'"),

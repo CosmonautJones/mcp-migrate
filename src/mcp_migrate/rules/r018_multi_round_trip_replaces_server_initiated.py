@@ -9,7 +9,7 @@ from .base import Finding, Fires, Project, Rule, Silent, _in_content_span, wire_
 # delimiters keep longer keys such as "elicitationId's" outside the boundary.
 TS_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*(?:\n|$))*"
 TS_ELICITATION_ID_RX = (
-    rf"(?:[\[{{,:=]|[\w$)\]]{TS_GAP}\(){TS_GAP}"
+    rf"(?:[\[{{,:=]|\.{TS_GAP}(?:get|set|has|delete){TS_GAP}\(){TS_GAP}"
     rf"""(?P<quote>["'`])elicitationId(?P=quote)(?={TS_GAP}(?:[\]}}:,);]|$))"""
 )
 
@@ -270,6 +270,10 @@ class MultiRoundTripReplacesServerInitiated(Rule):
                 if isinstance(owner, ast.BinOp):
                     # A fragment of a computed string is not the complete key.
                     prose_nodes.update(id(value) for value in (owner.left, owner.right))
+                if isinstance(owner, (ast.Attribute, ast.Subscript)):
+                    # Transforming/indexing the literal itself is not a read of
+                    # that key; payload["elicitationId"].upper() still is one.
+                    prose_nodes.add(id(owner.value))
                 if isinstance(owner, ast.JoinedStr):
                     # F-string text fragments are not complete wire literals.
                     # Keep nested expressions available for real payload keys.
@@ -306,7 +310,7 @@ class MultiRoundTripReplacesServerInitiated(Rule):
         # Inspect the whole source so a concatenation on the following line
         # cannot turn a string fragment into an exact wire literal. Bare
         # grouping/assertion expressions are conservatively left unclassified;
-        # call arguments still count even when the call's result is combined.
+        # key-method arguments still count when the call's result is combined.
         seen = {(f.path, f.line) for f in out if f.feature == "elicitationId"}
         for f in project.files:
             offsets = [0] + [m.end() for m in re.finditer("\n", f.text)]
