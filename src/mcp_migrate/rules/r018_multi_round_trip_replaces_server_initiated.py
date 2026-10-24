@@ -9,8 +9,8 @@ from .base import Finding, Fires, Project, Rule, Silent, _in_content_span, wire_
 # delimiters keep longer keys such as "elicitationId's" outside the boundary.
 TS_GAP = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*(?:\n|$))*"
 TS_ELICITATION_ID_RX = (
-    rf"(?P<concat>\+{TS_GAP}(?:\({TS_GAP})*)?[\[({{,:=]{TS_GAP}"
-    rf"""(?P<quote>["'`])elicitationId(?P=quote)(?!{TS_GAP}(?:\){TS_GAP})*\+)"""
+    rf"(?:[\[{{,:=]|[\w$)\]]{TS_GAP}\(){TS_GAP}"
+    rf"""(?P<quote>["'`])elicitationId(?P=quote)(?={TS_GAP}(?:[\]}}:,);]|$))"""
 )
 
 # Code-shaped identifiers -- SDK model/class names or plain Python names,
@@ -304,14 +304,14 @@ class MultiRoundTripReplacesServerInitiated(Rule):
 
     def _with_typescript_keys(self, project: Project, out: list[Finding]) -> list[Finding]:
         # Inspect the whole source so a concatenation on the following line
-        # cannot turn a string fragment into an exact wire literal.
+        # cannot turn a string fragment into an exact wire literal. Bare
+        # grouping/assertion expressions are conservatively left unclassified;
+        # call arguments still count even when the call's result is combined.
         seen = {(f.path, f.line) for f in out if f.feature == "elicitationId"}
         for f in project.files:
             offsets = [0] + [m.end() for m in re.finditer("\n", f.text)]
             spans = project._spans_for(f) or []
             for match in re.finditer(TS_ELICITATION_ID_RX, f.text):
-                if match.group("concat"):
-                    continue
                 row = bisect_right(offsets, match.start()) - 1
                 if _in_content_span(row + 1, match.start() - offsets[row], spans):
                     continue
