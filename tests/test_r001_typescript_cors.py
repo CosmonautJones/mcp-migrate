@@ -9,6 +9,29 @@ from mcp_migrate.rules.base import Project, SourceFile
 from mcp_migrate.rules.r001_session_id_removed import SessionIdRemoved
 
 
+@pytest.mark.parametrize("source,line", [
+    ('const sid = `${request.headers?.["mcp-session-id"]}`;\n', 1),
+    ('const sid = `${getHeaders()["mcp-session-id"]}`;\n', 1),
+    ('const sid = `session: ${\n  getHeaders()["mcp-session-id"]\n}`;\n', 2),
+    ('const sid = `${({value: getHeaders()["mcp-session-id"]}).value}`;\n', 1),
+    ('const sid = `${`nested ${getHeaders()["mcp-session-id"]}`}`;\n', 1),
+])
+def test_template_interpolation_header_reads_still_fire(source, line):
+    findings = _findings(source)
+    assert [(f.rule_id, f.line) for f in findings] == [("R001", line)]
+
+
+@pytest.mark.parametrize("source", [
+    'const help = `getHeaders()["mcp-session-id"]`;\n',
+    'const help = `\\${getHeaders()["mcp-session-id"]}`;\n',
+    'const help = `${"getHeaders()[\\\"mcp-session-id\\\"]"}`;\n',
+    'const help = `${/* getHeaders()["mcp-session-id"] */ value}`;\n',
+    'const help = `${value} getHeaders()["mcp-session-id"]`;\n',
+])
+def test_template_literal_text_and_interpolation_prose_remain_silent(source):
+    assert _findings(source) == []
+
+
 def _findings(source, language="typescript"):
     suffix = {"python": "py", "typescript": "ts", "javascript": "js"}[language]
     project = Project(

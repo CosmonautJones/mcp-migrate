@@ -1,7 +1,7 @@
 import re
 from bisect import bisect_right
 
-from .base import Finding, Fires, Project, Rule, Silent, _in_content_span
+from .base import Finding, Fires, Project, Rule, Silent
 
 # --- Python ---------------------------------------------------------------
 #
@@ -49,6 +49,55 @@ TS_SUBSCRIPT_RX = (
     rf"(?<=[\w$)\]}}])(?:{TS_GAP}!)?{TS_GAP}(?:\?\.{TS_GAP})?\["
     rf"{TS_GAP}(?P<header>(?P<quote>[\"'`])mcp-session-id(?P=quote)){TS_GAP}\]"
 )
+
+
+def _ts_subscript_code(text: str) -> bytearray:
+    """Mark receiver positions in code, including template interpolations.
+
+    This local textual scan handles strings/comments and balanced interpolation
+    braces; it does not attempt to parse TypeScript or regex literals.
+    """
+    code = bytearray(len(text))
+    stack = [["code", 0]]
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1:i + 2]
+        mode, depth = stack[-1]
+        if mode == "code":
+            if ch == "/" and nxt in ("/", "*"):
+                stack.append(["line" if nxt == "/" else "block", 0])
+                i += 2
+                continue
+            if ch in "\"'`":
+                stack.append([ch, 0])
+            elif depth and ch == "}" and depth == 1:
+                stack.pop()  # The closing interpolation brace is template syntax.
+            else:
+                code[i] = 1
+                if depth and ch in "{}":
+                    stack[-1][1] += 1 if ch == "{" else -1
+        elif mode == "line":
+            if ch == "\n":
+                stack.pop()
+        elif mode == "block":
+            if ch == "*" and nxt == "/":
+                stack.pop()
+                i += 2
+                continue
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == mode:
+            stack.pop()
+        elif mode == "`" and ch == "$" and nxt == "{":
+            stack.append(["code", 1])
+            i += 2
+            continue
+        elif mode != "`" and ch == "\n":
+            stack.pop()  # Do not let an unterminated ordinary quote hide the file.
+        i += 1
+    return code
 
 # --- JavaScript -----------------------------------------------------------
 #
@@ -264,12 +313,11 @@ class SessionIdRemoved(Rule):
         for f in project.files:
             lines = f.text.split("\n")
             offsets = [0] + [m.end() for m in re.finditer("\n", f.text)]
-            # Reuse search_code's cached spans to reject prose receivers.
-            spans = project._spans_for(f) or []
+            # Template literal text is prose, but ${...} contains active code.
+            code = _ts_subscript_code(f.text)
             for match in re.finditer(TS_SUBSCRIPT_RX, f.text, re.IGNORECASE):
                 receiver = match.start() - 1
-                row = bisect_right(offsets, receiver) - 1
-                if _in_content_span(row + 1, receiver - offsets[row], spans):
+                if not code[receiver]:
                     continue  # A receiver written inside prose is not code.
                 header = match.start("header")
                 row = bisect_right(offsets, header) - 1
